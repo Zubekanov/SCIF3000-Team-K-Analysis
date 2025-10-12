@@ -67,16 +67,17 @@ def transform_country_name(country_name: str, output: str):
         print(f"Error transforming country name {country_name}: {e}")
         return None
     
-def scrape_statcounter():
+def scrape_statcounter(check_exists=True):
     # Statcounter doesn't provide a dataset with all country data, so we have to scrape it.
 
     # Check if the scraping has already been done
-    try:
-        fcr.find_path("csv/csv_processed/statcounter_2023.csv")
-        print("Statcounter data already saved, skipping.")
-        return
-    except FileNotFoundError:
-        print("Statcounter data not found, proceeding to scrape.")
+    if check_exists:
+        try:
+            fcr.find_path("csv/csv_processed/statcounter_2023.csv")
+            print("Statcounter data already saved, skipping.")
+            return
+        except FileNotFoundError:
+            print("Statcounter data not found, proceeding to scrape.")
 
     base_url = "https://gs.statcounter.com/platform-market-share/desktop-mobile/{country_code}/chart.php"
     params = {
@@ -129,13 +130,14 @@ def scrape_statcounter():
     df.to_csv("csv/csv_processed/statcounter_2023.csv", index=False)
     print("Data saved to csv/csv_processed/statcounter_2023.csv")
 
-def repair_device_tiers():
-    try:
-        fcr.find_path("csv/csv_processed/device_tiers.csv")
-        print("Device tiers data already saved, skipping.")
-        return
-    except FileNotFoundError:
-        print("Device tiers data not found, proceeding to repair.")
+def repair_device_tiers(check_exists=True):
+    if check_exists:
+        try:
+            fcr.find_path("csv/csv_processed/device_tiers.csv")
+            print("Device tiers data already saved, skipping.")
+            return
+        except FileNotFoundError:
+            print("Device tiers data not found, proceeding to repair.")
 
     canva_device_tiers_name = "scif3000 [student data] - device tiers.csv"
 
@@ -219,13 +221,14 @@ def repair_device_tiers():
     device_tiers.to_csv("csv/csv_processed/device_tiers.csv", index=False)
     print("Device tiers data repaired and saved to csv/csv_processed/device_tiers.csv")
 
-def join_internet_users_and_population():
-    # try:
-    #     fcr.find_path("csv/csv_processed/internet_users_population_2020.csv")
-    #     print("Internet users and population data already saved, skipping.")
-    #     return
-    # except FileNotFoundError:
-    #     print("Internet users and population data not found, proceeding to join.")
+def join_internet_users_and_population(check_exists=True):
+    if check_exists:
+        try:
+            fcr.find_path("csv/csv_processed/internet_users_population_2020.csv")
+            print("Internet users and population data already saved, skipping.")
+            return
+        except FileNotFoundError:
+            print("Internet users and population data not found, proceeding to join.")
 
     # Seems like 2020 is the most recent year for internet users so we must join on that 
     internet_users = fcr.find("internet_users.csv")
