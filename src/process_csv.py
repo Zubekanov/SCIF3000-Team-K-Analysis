@@ -4,6 +4,7 @@ import requests
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+import matplotlib.pyplot as plt
 
 fcr = FileConfigReader()
 
@@ -258,7 +259,116 @@ def join_internet_users_and_population(check_exists=True):
     missing_country_names = [transform_iso3(iso3, 'name') for iso3 in missing_countries]
     print(f"Countries missing from internet users and population data: {missing_country_names}")
     
+def unflatten_device_tiers():
+    try:
+        fcr.find_path("csv/csv_processed/monthly_users_plan.csv")
+        print("Unflattened monthly users data already saved, skipping.")
+        return
+    except FileNotFoundError:
+        print("Unflattened monthly users data not found, proceeding to unflatten.")
+    device_tiers_df = fcr.find("scif3000 [student data] - mau_by_plan_type.csv")
+    # Rows are MONTH_END_DATE, PRIMARY_PLAN_TYPE, COUNTRY_CODE, Monthly Active Users
+    # Turn MONTH_END_DATE into the second dimension (2020-01-31)
+    unflattened = device_tiers_df.pivot_table(index=['COUNTRY_CODE', 'PRIMARY_PLAN_TYPE'], columns='MONTH_END_DATE', values='Monthly Active Users', aggfunc='sum').reset_index()
+    # Flatten the columns
+    unflattened.columns.name = None
+    unflattened.columns = [str(col) for col in unflattened.columns]
+    # Add ISO2 and ISO3 codes
+    unflattened.rename(columns={'COUNTRY_CODE': 'ISO2'}, inplace=True)
+    unflattened['ISO3'] = unflattened['ISO2'].apply(lambda x: transform_iso2(x, 'ISO3'))
+    # Add country names
+    unflattened['Country'] = unflattened['ISO2'].apply(lambda x: transform_iso2(x, 'name'))
+    # Reorder columns
+    cols = ['Country', 'ISO2', 'ISO3'] + [col for col in unflattened.columns if col not in ['Country', 'ISO2', 'ISO3']]
+    unflattened = unflattened[cols]
+    unflattened.to_csv("csv/csv_processed/monthly_users_plan.csv", index=False)
+    print("Unflattened monthly users data saved to csv/csv_processed/monthly_users_plan.csv")
+
+    # Also make a version where all the plan types are summed
+    # Sum all plan types for each country
+    summed = unflattened.groupby(['Country', 'ISO2', 'ISO3']).sum(numeric_only=True).reset_index()
+    summed.to_csv("csv/csv_processed/monthly_users_total.csv", index=False)
+    print("Summed monthly users data saved to csv/csv_processed/monthly_users_total.csv")
+
+def make_mau_graphs():
+    # Generate a cumulative line graph of monthly active users by plan type for each country and global
+    mau_df = fcr.find("monthly_users_plan.csv")
+    mau_total_df = fcr.find("monthly_users_total.csv")
+    plan_types = mau_df['PRIMARY_PLAN_TYPE'].unique()
+    countries = mau_df['Country'].unique()
+    # Save a graph for each country to graphs/mau/{country}.png
+    for country in countries:
+        country_df = mau_df[mau_df['Country'] == country]
+        if country_df.empty:
+            continue
+        plt.figure(figsize=(10, 6))
+        dates = [col for col in country_df.columns if col not in ['Country', 'ISO2', 'ISO3', 'PRIMARY_PLAN_TYPE']]
+        cumulative_values = np.zeros(len(dates))
+        for plan_type in plan_types:
+            plan_df = country_df[country_df['PRIMARY_PLAN_TYPE'] == plan_type]
+            if plan_df.empty:
+                continue
+            values = plan_df[dates].values.flatten()
+            # Interpolate missing points
+            interpolated_values = pd.Series(values).interpolate(method='linear', limit_direction='both').values
+            cumulative_values += interpolated_values
+            plt.fill_between(dates, cumulative_values - interpolated_values, cumulative_values, label=plan_type, alpha=0.6)
+        plt.title(f'Cumulative Monthly Active Users by Plan Type in {country}')
+        plt.xlabel('Year')
+        plt.ylabel('Cumulative Monthly Active Users')
+        plt.xticks(ticks=range(0, len(dates), 12), labels=[dates[i][:4] for i in range(0, len(dates), 12)], rotation=45)
+        plt.legend()
+        plt.gca().get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x):,}'))
+        plt.tight_layout()
+        plt.savefig(f'graphs/mau/{country}.png')
+        plt.close()
+        print(f"Saved cumulative mau graph for {country}.")
+    # Save one for global
+    plt.figure(figsize=(10, 6))
+    cumulative_values = np.zeros(len(dates))
+    for plan_type in plan_types:
+        plan_df = mau_df[mau_df['PRIMARY_PLAN_TYPE'] == plan_type]
+        if plan_df.empty:
+            continue
+        values = plan_df[dates].sum().values.flatten()
+        cumulative_values += values
+        plt.fill_between(dates, cumulative_values - values, cumulative_values, label=plan_type, alpha=0.6)
+    plt.title('Global Cumulative Monthly Active Users by Plan Type')
+    plt.xlabel('Year')
+    plt.ylabel('Cumulative Monthly Active Users')
+    plt.xticks(ticks=range(0, len(dates), 12), labels=[dates[i][:4] for i in range(0, len(dates), 12)], rotation=45)
+    plt.legend()
+    plt.gca().get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x):,}'))
+    plt.tight_layout()
+    plt.savefig('graphs/mau/global.png')
+    plt.close()
+    print("Saved global cumulative mau graph.")
+
 if __name__ == "__main__":
     scrape_statcounter()
     repair_device_tiers()
     join_internet_users_and_population()
+    unflatten_device_tiers()
+    make_mau_graphs()
+
+    # if True is easier than commenting and uncommenting to run
+    if False:
+        # Generate world heatmap is private so you might not have it
+        # i.e. need to import it here in a try
+        try:
+            from heatmaps import generate_world_heatmap
+
+            mobile_df = fcr.find("statcounter_2023.csv")
+            mobile_heatmap_png = generate_world_heatmap(
+                mobile_df,
+                value_col = "Mobile Share 2023",
+                value_name = "Mobile Share (%)",
+                title = "Mobile Share by Country (%) (2023)",
+                colour_scale = "Viridis",
+                output_png = "graphs/heatmaps/mobile_heatmap.png",
+                colour_range=(0, 100)
+            )
+            print(f"Mobile heatmap saved.")
+
+        except ImportError as e:
+            print(f"Could not import generate_world_heatmap: {e}")
