@@ -291,6 +291,12 @@ def unflatten_device_tiers():
     print("Summed monthly users data saved to csv/csv_processed/monthly_users_total.csv")
 
 def make_mau_graphs():
+    try:
+        fcr.find_path("graphs/mau/global.png")
+        print("MAU graphs already saved, skipping.")
+        return
+    except FileNotFoundError:
+        print("MAU graphs not found, proceeding to generate.")
     # Generate a cumulative line graph of monthly active users by plan type for each country and global
     mau_df = fcr.find("monthly_users_plan.csv")
     mau_total_df = fcr.find("monthly_users_total.csv")
@@ -344,12 +350,36 @@ def make_mau_graphs():
     plt.close()
     print("Saved global cumulative mau graph.")
 
+def process_gdp_and_gdp_per_capita():
+    try:
+        fcr.find_path("csv/csv_processed/gdp_2023.csv")
+        print("GDP data already saved, skipping.")
+        return
+    except FileNotFoundError:
+        print("GDP data not found, proceeding to process.")
+    gdp_df = fcr.find("gdp-worldbank-constant-usd.csv")
+    gdp_per_capita_df = fcr.find("gdp-per-capita-worldbank.csv")
+    # Take 2023 data
+    gdp_2023 = gdp_df[['Entity', 'Code', 'GDP (constant 2015 US$)']][gdp_df['Year'] == 2023]
+    gdp_per_capita_2023 = gdp_per_capita_df[['Entity', 'Code', 'GDP per capita, PPP (constant 2021 international $)']][gdp_per_capita_df['Year'] == 2023]
+    gdp_2023.rename(columns={'Entity': 'Country', 'Code': 'ISO3', 'GDP (constant 2015 US$)': 'GDP'}, inplace=True)
+    gdp_per_capita_2023.rename(columns={'Entity': 'Country', 'Code': 'ISO3', 'GDP per capita, PPP (constant 2021 international $)': 'GDP per Capita'}, inplace=True)
+    # Merge on Country and ISO3 (drop areas with no iso3)
+    gdp_2023 = gdp_2023[gdp_2023['ISO3'].notna()]
+    gdp_per_capita_2023 = gdp_per_capita_2023[gdp_per_capita_2023['ISO3'].notna()]
+    merged = pd.merge(gdp_2023, gdp_per_capita_2023, on=['Country', 'ISO3'], how='inner')
+    merged['ISO2'] = merged['ISO3'].apply(lambda x: transform_iso3(x, 'ISO2'))
+    merged = merged[['Country', 'ISO2', 'ISO3', 'GDP', 'GDP per Capita']]
+    merged.to_csv("csv/csv_processed/gdp_2023.csv", index=False)
+    print("GDP data processed and saved to csv/csv_processed/gdp_2023.csv")
+
 if __name__ == "__main__":
     scrape_statcounter()
     repair_device_tiers()
     join_internet_users_and_population()
     unflatten_device_tiers()
     make_mau_graphs()
+    process_gdp_and_gdp_per_capita()
 
     # if True is easier than commenting and uncommenting to run
     if False:
@@ -369,6 +399,8 @@ if __name__ == "__main__":
                 colour_range=(0, 100)
             )
             print(f"Mobile heatmap saved.")
+
+            
 
         except ImportError as e:
             print(f"Could not import generate_world_heatmap: {e}")
