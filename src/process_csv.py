@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import seaborn
 
 fcr = FileConfigReader()
 
@@ -219,6 +220,11 @@ def repair_device_tiers(check_exists=True):
     device_tiers['ISO3'] = device_tiers['Country'].apply(lambda x: transform_country_name(x, 'ISO3'))
     # Reorder columns
     device_tiers = device_tiers[['Country', 'ISO2', 'ISO3', 'High', 'Mid', 'Low', 'Unknown', 'Total']]
+    # Fill empty values with 0
+    device_tiers.fillna(0, inplace=True)
+    # Convert to int
+    for col in ['High', 'Mid', 'Low', 'Unknown', 'Total']:
+        device_tiers[col] = device_tiers[col].astype(int)
     device_tiers.to_csv("csv/csv_processed/device_tiers.csv", index=False)
     print("Device tiers data repaired and saved to csv/csv_processed/device_tiers.csv")
 
@@ -373,6 +379,36 @@ def process_gdp_and_gdp_per_capita():
     merged.to_csv("csv/csv_processed/gdp_2023.csv", index=False)
     print("GDP data processed and saved to csv/csv_processed/gdp_2023.csv")
 
+def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diagonals=False, remove_top=False):
+    # Pass in a dict of form {file_name: [value_column_names]} or {file_name: value_column_name} to correlate
+    df = pd.DataFrame()
+    for file_name, value_columns in file_dict.items():
+        temp_df = fcr.find(file_name)
+        if isinstance(value_columns, str):
+            value_columns = [value_columns]  # Convert single column name to list for consistency
+        temp_df = temp_df.sort_values(by="ISO2")  # Sort by ISO2 to ensure alignment
+        df = pd.concat([df, temp_df[value_columns]], axis=1)
+    df.columns = [col for cols in file_dict.values() for col in (cols if isinstance(cols, list) else [cols])]
+    corr = df.corr()
+    
+    if blank_diagonals:
+        np.fill_diagonal(corr.values, np.nan)  # Replace diagonal values with NaN
+    
+    if remove_top:
+        mask = np.triu(np.ones_like(corr, dtype=bool))
+        if blank_diagonals:
+            mask[np.diag_indices_from(mask)] = True  # Mask the diagonal if blank_diagonals is True
+        plt.figure(figsize=(10, 8))
+        seaborn.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", square=True, mask=mask)
+    else:
+        plt.figure(figsize=(10, 8))
+        seaborn.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", square=True, mask=corr.isnull() if blank_diagonals else None)
+    
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_png)
+    plt.close()
+
 if __name__ == "__main__":
     scrape_statcounter()
     repair_device_tiers()
@@ -380,6 +416,17 @@ if __name__ == "__main__":
     unflatten_device_tiers()
     make_mau_graphs()
     process_gdp_and_gdp_per_capita()
+    correlation_matrix(
+        {
+            "device_tiers.csv": ["High", "Mid", "Low", "Total"],
+            "gdp_2023.csv": "GDP per Capita",
+            "internet_users_population_2020.csv": "Internet Penetration",
+        },
+        output_png="graphs/correlation_matrices/gdp_internet_penetration.png",
+        title="Correlations",
+        blank_diagonals=True,
+        remove_top=True
+    )
 
     # if True is easier than commenting and uncommenting to run
     if False:
