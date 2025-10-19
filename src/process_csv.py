@@ -250,11 +250,28 @@ def join_internet_users_and_population(check_exists=True):
     merged = pd.merge(internet_users_2020, population_2020, on=['Entity', 'Code'], how='inner')
     merged.rename(columns={'Number of Internet users': 'Internet Users', 'Population (historical)': 'Population', 'Code': 'ISO3', 'Entity': 'Country'}, inplace=True)
     merged['ISO2'] = merged['ISO3'].apply(lambda x: transform_iso3(x, 'ISO2'))
-    merged['Internet Penetration'] = merged['Internet Users'] / merged['Population']
+
+    # NEW Also join in social media users 2021
+    social_media = fcr.find("social-media-users-by-country-2021.csv")
+    # This has flagCode = ISO2
+    social_media['ISO2'] = social_media['flagCode']
+    social_media['ISO3'] = social_media['ISO2'].apply(lambda x: transform_iso2(x, 'ISO3'))
+    social_media['Social Media Users'] = social_media['SocialMediaUsers_2021']
+    merged = pd.merge(merged, social_media[['ISO2', 'ISO3', 'Social Media Users']], on=['ISO2', 'ISO3'], how='left')
+    # when internet users or social media users < pop, set to NA
+    merged.loc[merged['Internet Users'] > merged['Population'], 'Internet Users'] = np.nan
+    merged.loc[merged['Social Media Users'] > merged['Population'], 'Social Media Users'] = np.nan
+    # Also save internet users per capita, social media users per capita
+    merged['Internet Users per Capita'] = merged['Internet Users'] / merged['Population']
+    merged['Social Media Users per Capita'] = merged['Social Media Users'] / merged['Population']
     
+    # redrop no iso2 bc owid reimports total
+    merged = merged[merged['ISO2'].notna()]
+
+
     print(merged.head())
     # Rearrange to be nice
-    merged = merged[['Country', 'ISO2', 'ISO3', 'Internet Penetration', 'Internet Users', 'Population']]
+    merged = merged[['Country', 'ISO2', 'ISO3', 'Internet Users', 'Internet Users per Capita', 'Social Media Users', 'Social Media Users per Capita', 'Population']]
     merged.to_csv("csv/csv_processed/internet_users_population_2020.csv", index=False)
 
     # Find out which countries are missing
@@ -379,6 +396,24 @@ def process_gdp_and_gdp_per_capita():
     merged.to_csv("csv/csv_processed/gdp_2023.csv", index=False)
     print("GDP data processed and saved to csv/csv_processed/gdp_2023.csv")
 
+def users_per_capita_and_per_internet_capita():
+    try:
+        fcr.find_path("csv/csv_processed/device_tiers_per_capita_and_internet_user.csv")
+        print("Device tiers per capita and per internet user data already saved, skipping.")
+        return
+    except FileNotFoundError:
+        print("Device tiers per capita and per internet user data not found, proceeding to process.")
+
+    # Merge devices and population / internet users to get devices per capita and per internet user
+    device_tiers = fcr.find("device_tiers.csv")
+    population = fcr.find("internet_users_population_2020.csv")
+    merged = pd.merge(device_tiers, population, on=['Country', 'ISO2', 'ISO3'], how='inner')
+    for tier in ['High', 'Mid', 'Low', 'Unknown', 'Total']:
+        merged[f'{tier} per Capita'] = merged[tier] / merged['Population']
+        merged[f'{tier} per Internet User'] = merged[tier] / merged['Internet Users']
+    merged.to_csv("csv/csv_processed/device_tiers_per_capita_and_internet_user.csv", index=False)
+    print("Device tiers per capita and per internet user data saved to csv/csv_processed/device_tiers_per_capita_and_internet_user.csv")
+
 def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diagonals=False, remove_top=False):
     # Pass in a dict of form {file_name: [value_column_names]} or {file_name: value_column_name} to correlate
     df = pd.DataFrame()
@@ -386,10 +421,16 @@ def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diago
         temp_df = fcr.find(file_name)
         if isinstance(value_columns, str):
             value_columns = [value_columns]  # Convert single column name to list for consistency
-        temp_df = temp_df.sort_values(by="ISO2")  # Sort by ISO2 to ensure alignment
-        df = pd.concat([df, temp_df[value_columns]], axis=1)
-    df.columns = [col for cols in file_dict.values() for col in (cols if isinstance(cols, list) else [cols])]
-    corr = df.corr()
+        # Ensure alignment by merging on Country, ISO2, and ISO3
+        temp_df = temp_df[['Country', 'ISO2', 'ISO3'] + value_columns]
+        if df.empty:
+            df = temp_df
+        else:
+            df = pd.merge(df, temp_df, on=['Country', 'ISO2', 'ISO3'], how='inner')
+    
+    # Extract only the value columns for correlation
+    value_columns = [col for cols in file_dict.values() for col in (cols if isinstance(cols, list) else [cols])]
+    corr = df[value_columns].corr()
     
     if blank_diagonals:
         np.fill_diagonal(corr.values, np.nan)  # Replace diagonal values with NaN
@@ -398,6 +439,8 @@ def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diago
         mask = np.triu(np.ones_like(corr, dtype=bool))
         if blank_diagonals:
             mask[np.diag_indices_from(mask)] = True  # Mask the diagonal if blank_diagonals is True
+        else:
+            mask[np.diag_indices_from(mask)] = False  # Ensure diagonal is not masked if blank_diagonals is False
         plt.figure(figsize=(10, 8))
         seaborn.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", square=True, mask=mask)
     else:
@@ -412,24 +455,25 @@ def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diago
 if __name__ == "__main__":
     scrape_statcounter()
     repair_device_tiers()
-    join_internet_users_and_population()
+    join_internet_users_and_population(check_exists=False)
     unflatten_device_tiers()
     make_mau_graphs()
     process_gdp_and_gdp_per_capita()
+    users_per_capita_and_per_internet_capita()
     correlation_matrix(
         {
-            "device_tiers.csv": ["High", "Mid", "Low", "Total"],
+            "device_tiers.csv": ["Total"],
+            "device_tiers_per_capita_and_internet_user.csv": ["Total per Capita", "Total per Internet User"],
             "gdp_2023.csv": "GDP per Capita",
-            "internet_users_population_2020.csv": "Internet Penetration",
+            "internet_users_population_2020.csv": ["Internet Users", "Internet Users per Capita", "Social Media Users", "Social Media Users per Capita"],
         },
         output_png="graphs/correlation_matrices/gdp_internet_penetration.png",
         title="Correlations",
-        blank_diagonals=True,
         remove_top=True
     )
 
     # if True is easier than commenting and uncommenting to run
-    if False:
+    if True:
         # Generate world heatmap is private so you might not have it
         # i.e. need to import it here in a try
         try:
@@ -447,7 +491,18 @@ if __name__ == "__main__":
             )
             print(f"Mobile heatmap saved.")
 
-            
+            # Social media users per capita
+            internet_population_df = fcr.find("internet_users_population_2020.csv")
+            social_media_heatmap_png = generate_world_heatmap(
+                internet_population_df,
+                value_col = "Social Media Users per Capita",
+                value_name = "Social Media Users per Capita",
+                title = "Social Media Users per Capita by Country (2020)",
+                colour_scale = "Viridis",
+                output_png = "graphs/heatmaps/social_media_users_per_capita_heatmap.png",
+                colour_range=(0, internet_population_df["Social Media Users per Capita"].max())
+            )
+            print(f"Social media users per capita heatmap saved.")
 
         except ImportError as e:
             print(f"Could not import generate_world_heatmap: {e}")
