@@ -244,7 +244,7 @@ def join_internet_users_and_population(check_exists=True):
     # Entity and Code are the same on both, take year = 2020
     internet_users_2020 = internet_users[internet_users['Year'] == 2020][['Entity', 'Code', 'Number of Internet users']]
     population_2020 = population[population['Year'] == 2020][['Entity', 'Code', 'Population (historical)']]
-    # No iso2 = drop
+    # No iso3 = drop
     internet_users_2020 = internet_users_2020[internet_users_2020['Code'].notna()]
     population_2020 = population_2020[population_2020['Code'].notna()]
     merged = pd.merge(internet_users_2020, population_2020, on=['Entity', 'Code'], how='inner')
@@ -265,13 +265,39 @@ def join_internet_users_and_population(check_exists=True):
     merged['Internet Users per Capita'] = merged['Internet Users'] / merged['Population']
     merged['Social Media Users per Capita'] = merged['Social Media Users'] / merged['Population']
     
+    # new new add on adoption stats
+    ict_adoption_df = fcr.find("ict-adoption-per-100-people.csv")
+    # make it per capita 
+    ict_adoption_df['Fixed Telephone per Capita'] = ict_adoption_df['Fixed telephone subscriptions (per 100 people)'].apply(lambda x: x / 100)
+    ict_adoption_df['Mobile Cellular per Capita'] = ict_adoption_df['Mobile cellular subscriptions (per 100 people)'].apply(lambda x: x / 100)
+    ict_adoption_df['Fixed Broadband per Capita'] = ict_adoption_df['Fixed broadband subscriptions (per 100 people)'].apply(lambda x: x / 100)
+    ict_adoption_df['ICT Internet Users per Capita'] = ict_adoption_df['Individuals using the Internet (% of population)'].apply(lambda x: x / 100)
+
+    # Keep 2021 data
+    ict_adoption_df = ict_adoption_df[ict_adoption_df['Year'] == 2021]
+    # Merge on code = iso3
+    merged = pd.merge(merged, ict_adoption_df[['Code', 'Fixed Telephone per Capita', 'Mobile Cellular per Capita', 'Fixed Broadband per Capita', 'ICT Internet Users per Capita']], left_on='ISO3', right_on='Code', how='left')
+
+    # Multiply through to get absolute values
+    merged['Fixed Telephone'] = merged['Fixed Telephone per Capita'] * merged['Population']
+    merged['Mobile Cellular'] = merged['Mobile Cellular per Capita'] * merged['Population']
+    merged['Fixed Broadband'] = merged['Fixed Broadband per Capita'] * merged['Population']
+    merged['ICT Internet Users'] = merged['ICT Internet Users per Capita'] * merged['Population']
+    merged['Internet Users'] = merged['Internet Users per Capita'] * merged['Population']
+    merged['Social Media Users'] = merged['Social Media Users per Capita'] * merged['Population']
+
+    # Trim per capitas to 4 d.p. and absolute values to int
+    for col in ['Fixed Telephone per Capita', 'Mobile Cellular per Capita', 'Fixed Broadband per Capita', 'ICT Internet Users per Capita', 'Internet Users per Capita', 'Social Media Users per Capita']:
+        merged[col] = merged[col].round(4)
+    for col in ['Fixed Telephone', 'Mobile Cellular', 'Fixed Broadband', 'ICT Internet Users', 'Internet Users', 'Social Media Users']:
+        merged[col] = merged[col].round(0).astype('Int64')
+
     # redrop no iso2 bc owid reimports total
     merged = merged[merged['ISO2'].notna()]
 
-
     print(merged.head())
     # Rearrange to be nice
-    merged = merged[['Country', 'ISO2', 'ISO3', 'Internet Users', 'Internet Users per Capita', 'Social Media Users', 'Social Media Users per Capita', 'Population']]
+    merged = merged[['Country', 'ISO2', 'ISO3', 'Fixed Telephone', 'Mobile Cellular', 'Fixed Broadband', 'ICT Internet Users', 'Internet Users', 'Social Media Users', 'Population', 'Fixed Telephone per Capita', 'Mobile Cellular per Capita', 'Fixed Broadband per Capita', 'ICT Internet Users per Capita', 'Internet Users per Capita', 'Social Media Users per Capita']]
     merged.to_csv("csv/csv_processed/internet_users_population_2020.csv", index=False)
 
     # Find out which countries are missing
@@ -473,7 +499,7 @@ if __name__ == "__main__":
     )
 
     # if True is easier than commenting and uncommenting to run
-    if True:
+    if False:
         # Generate world heatmap is private so you might not have it
         # i.e. need to import it here in a try
         try:
