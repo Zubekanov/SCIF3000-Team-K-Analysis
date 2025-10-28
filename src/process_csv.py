@@ -330,6 +330,10 @@ def unflatten_device_tiers():
     # Reorder columns
     cols = ['Country', 'ISO2', 'ISO3'] + [col for col in unflattened.columns if col not in ['Country', 'ISO2', 'ISO3']]
     unflattened = unflattened[cols]
+    # Also add columns for each year
+    for year in range(2020, 2024):
+        year_cols = [col for col in unflattened.columns if col.startswith(f"{year}-")]
+        unflattened[str(year)] = unflattened[year_cols].sum(axis=1)
     unflattened.to_csv("csv/csv_processed/monthly_users_plan.csv", index=False)
     print("Unflattened monthly users data saved to csv/csv_processed/monthly_users_plan.csv")
 
@@ -351,13 +355,19 @@ def make_mau_graphs():
     mau_total_df = fcr.find("monthly_users_total.csv")
     plan_types = mau_df['PRIMARY_PLAN_TYPE'].unique()
     countries = mau_df['Country'].unique()
+    # Exclude yearly columns (e.g., 2020, 2021, etc.)
+    dates = [col for col in mau_df.columns if col not in ['Country', 'ISO2', 'ISO3', 'PRIMARY_PLAN_TYPE'] and not col.isdigit()]
+    
+    # Assign consistent colors to plan types
+    color_palette = seaborn.color_palette("tab10", len(plan_types))
+    plan_type_colors = {plan_type: color_palette[i] for i, plan_type in enumerate(plan_types)}
+    
     # Save a graph for each country to graphs/mau/{country}.png
     for country in countries:
         country_df = mau_df[mau_df['Country'] == country]
         if country_df.empty:
             continue
         plt.figure(figsize=(10, 6))
-        dates = [col for col in country_df.columns if col not in ['Country', 'ISO2', 'ISO3', 'PRIMARY_PLAN_TYPE']]
         cumulative_values = np.zeros(len(dates))
         for plan_type in plan_types:
             plan_df = country_df[country_df['PRIMARY_PLAN_TYPE'] == plan_type]
@@ -367,7 +377,8 @@ def make_mau_graphs():
             # Interpolate missing points
             interpolated_values = pd.Series(values).interpolate(method='linear', limit_direction='both').values
             cumulative_values += interpolated_values
-            plt.fill_between(dates, cumulative_values - interpolated_values, cumulative_values, label=plan_type, alpha=0.6)
+            plt.fill_between(dates, cumulative_values - interpolated_values, cumulative_values, 
+                             label=plan_type, alpha=0.6, color=plan_type_colors[plan_type])
         plt.title(f'Cumulative Monthly Active Users by Plan Type in {country}')
         plt.xlabel('Year')
         plt.ylabel('Cumulative Monthly Active Users')
@@ -378,6 +389,7 @@ def make_mau_graphs():
         plt.savefig(f'graphs/mau/{country}.png')
         plt.close()
         print(f"Saved cumulative mau graph for {country}.")
+    
     # Save one for global
     plt.figure(figsize=(10, 6))
     cumulative_values = np.zeros(len(dates))
@@ -387,7 +399,8 @@ def make_mau_graphs():
             continue
         values = plan_df[dates].sum().values.flatten()
         cumulative_values += values
-        plt.fill_between(dates, cumulative_values - values, cumulative_values, label=plan_type, alpha=0.6)
+        plt.fill_between(dates, cumulative_values - values, cumulative_values, 
+                         label=plan_type, alpha=0.6, color=plan_type_colors[plan_type])
     plt.title('Global Cumulative Monthly Active Users by Plan Type')
     plt.xlabel('Year')
     plt.ylabel('Cumulative Monthly Active Users')
@@ -440,7 +453,7 @@ def users_per_capita_and_per_internet_capita():
     merged.to_csv("csv/csv_processed/device_tiers_per_capita_and_internet_user.csv", index=False)
     print("Device tiers per capita and per internet user data saved to csv/csv_processed/device_tiers_per_capita_and_internet_user.csv")
 
-def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diagonals=False, remove_top=False):
+def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diagonals=False, remove_top=False, exclude_rows: list = None):
     # Pass in a dict of form {file_name: [value_column_names]} or {file_name: value_column_name} to correlate
     df = pd.DataFrame()
     for file_name, value_columns in file_dict.items():
@@ -453,6 +466,13 @@ def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diago
             df = temp_df
         else:
             df = pd.merge(df, temp_df, on=['Country', 'ISO2', 'ISO3'], how='inner')
+    
+    # Exclude specified rows
+    if exclude_rows:
+        df = df[~df['Country'].isin(exclude_rows)]
+    
+    # Fill nans with 0 for correlation purposes
+    df.fillna(0, inplace=True)
     
     # Extract only the value columns for correlation
     value_columns = [col for cols in file_dict.values() for col in (cols if isinstance(cols, list) else [cols])]
@@ -481,7 +501,7 @@ def correlation_matrix(file_dict: dict, output_png: str, title: str, blank_diago
 if __name__ == "__main__":
     scrape_statcounter()
     repair_device_tiers()
-    join_internet_users_and_population(check_exists=False)
+    join_internet_users_and_population()
     unflatten_device_tiers()
     make_mau_graphs()
     process_gdp_and_gdp_per_capita()
@@ -495,11 +515,14 @@ if __name__ == "__main__":
         },
         output_png="graphs/correlation_matrices/gdp_internet_penetration.png",
         title="Correlations",
-        remove_top=True
+        remove_top=True,
+        # China has regulation issues,
+        # Russia is currently under sanctions,
+        exclude_rows=["Russia", "China"]
     )
 
     # if True is easier than commenting and uncommenting to run
-    if False:
+    if True:
         # Generate world heatmap is private so you might not have it
         # i.e. need to import it here in a try
         try:
@@ -529,6 +552,29 @@ if __name__ == "__main__":
                 colour_range=(0, internet_population_df["Social Media Users per Capita"].max())
             )
             print(f"Social media users per capita heatmap saved.")
+
+            absolute_social_media_heatmap_png = generate_world_heatmap(
+                internet_population_df,
+                value_col = "Social Media Users",
+                value_name = "Social Media Users",
+                title = "Social Media Users by Country (2020) (Capped at 100 million)",
+                colour_scale = "Viridis",
+                output_png = "graphs/heatmaps/social_media_users_heatmap.png",
+                colour_range=(0, 100000000)
+            )
+            print(f"Absolute social media users heatmap saved.")
+
+            mau_df = fcr.find("monthly_users_total.csv")
+            mau_heatmap_png = generate_world_heatmap(
+                mau_df,
+                value_col = "2023",
+                value_name = "Cumulative Yearly Active Users (2023)",
+                title = "Cumulative Monthly Active Users by Country (2023)",
+                colour_scale = "Viridis",
+                output_png = "graphs/heatmaps/mau_2023_heatmap.png",
+                colour_range=(0, mau_df["2023"].max())
+            )
+            print(f"MAU 2023 heatmap saved.")
 
         except ImportError as e:
             print(f"Could not import generate_world_heatmap: {e}")
