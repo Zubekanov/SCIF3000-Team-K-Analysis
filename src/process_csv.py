@@ -517,7 +517,8 @@ if __name__ == "__main__":
         title="Correlations",
         remove_top=True,
         # China has regulation issues,
-        # Russia is currently under sanctions,
+        # Russia is being sanctioned,
+        # I dont think there are any others but they are the ones with bigly populations anyways
         exclude_rows=["Russia", "China"]
     )
 
@@ -568,13 +569,36 @@ if __name__ == "__main__":
             mau_heatmap_png = generate_world_heatmap(
                 mau_df,
                 value_col = "2023",
-                value_name = "Cumulative Yearly Active Users (2023)",
-                title = "Cumulative Monthly Active Users by Country (2023)",
+                value_name = "Total Users in 2023",
+                title = "Cumulative Yearly Active Users by Country (2023)",
                 colour_scale = "Viridis",
                 output_png = "graphs/heatmaps/mau_2023_heatmap.png",
                 colour_range=(0, mau_df["2023"].max())
             )
             print(f"MAU 2023 heatmap saved.")
+
+            devices_df = fcr.find("device_tiers.csv")
+            devices_heatmap_png = generate_world_heatmap(
+                devices_df,
+                value_col = "Total",
+                value_name = "Total Devices",
+                title = "Total Devices by Country",
+                colour_scale = "Viridis",
+                output_png = "graphs/heatmaps/total_devices_heatmap.png",
+                colour_range=(0, devices_df["Total"].max())
+            )
+            print(f"Total devices heatmap saved.")
+
+            # Also generate capped version for visualisation
+            devices_capped_heatmap_png = generate_world_heatmap(
+                devices_df,
+                value_col = "Total",
+                value_name = "Total Devices",
+                title = "Total Devices by Country (Capped at 2 million)",
+                colour_scale = "Viridis",
+                output_png = "graphs/heatmaps/total_devices_capped_heatmap.png",
+                colour_range=(0, 2000000)
+            )
 
         except ImportError as e:
             print(f"Could not import generate_world_heatmap: {e}")
